@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}Pricing - AI Review Analyzer{% endblock %}
+
+{% block content %}
+<section class="pricing">
+    <div class="pricing-container">
+        <div class="pricing-header">
+            <h1>Choose Your Plan</h1>
+            <p>Select the perfect plan for your business needs. All plans include our core AI analysis features.</p>
+        </div>
+
+        <div class="pricing-grid">
+            <div class="pricing-card">
+                <div class="pricing-header-content">
+                    <h3>Basic</h3>
+                    <div>
+                        <span class="price">$9.99</span>
+                        <span class="price-period">/month</span>
+                    </div>
+                </div>
+                
+                <ul class="features">
+                    <li>Up to 5 business analyses per month</li>
+                    <li>Basic AI insights</li>
+                    <li>PDF report generation</li>
+                    <li>Email support</li>
+                </ul>
+                
+                <a href="/signup" class="btn btn-outline" style="width: 100%;">Get Started</a>
+            </div>
+
+            <div class="pricing-card popular">
+                <div class="popular-badge">Most Popular</div>
+                <div class="pricing-header-content">
+                    <h3>Pro</h3>
+                    <div>
+                        <span class="price">$15.99</span>
+                        <span class="price-period">/month</span>
+                    </div>
+                </div>
+                
+                <ul class="features">
+                    <li>Up to 20 business analyses per month</li>
+                    <li>Advanced AI insights</li>
+                    <li>Detailed PDF reports</li>
+                    <li>Priority email support</li>
+                    <li>Competitor analysis</li>
+                    <li>Trend tracking</li>
+                </ul>
+                
+                <a href="/signup" class="btn btn-primary" style="width: 100%;">Get Started</a>
+            </div>
+
+            <div class="pricing-card">
+                <div class="pricing-header-content">
+                    <h3>Enterprise</h3>
+                    <div>
+                        <span class="price">$49.99</span>
+                        <span class="price-period">/month</span>
+                    </div>
+                </div>
+                
+                <ul class="features">
+                    <li>Unlimited business analyses</li>
+                    <li>Premium AI insights</li>
+                    <li>Custom branded reports</li>
+                    <li>24/7 phone & email support</li>
+                    <li>API access</li>
+                    <li>Custom integrations</li>
+                    <li>Dedicated account manager</li>
+                </ul>
+                
+                <a href="/signup" class="btn btn-outline" style="width: 100%;">Get Started</a>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 4rem;">
+            <p style="color: #666666; margin-bottom: 1rem;">
+                All plans include a 14-day free trial. No credit card required.
+            </p>
+            <p style="color: #999999; font-size: 14px;">
+                Need a custom solution? <a href="mailto:contact@aireviewanalyzer.com" style="color: #000000;">Contact us</a>
+            </p>
+        </div>
+    </div>
+</section>
+{% endblock %}

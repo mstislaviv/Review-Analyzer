@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - AI Review Analyzer{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="dashboard-container">
+        <div class="dashboard-header">
+            <h1>Welcome back, {{ user.name }}!</h1>
+            <p>Submit your business details to get AI-powered insights from your customer reviews.</p>
+        </div>
+
+        <div class="dashboard-grid">
+            <!-- Order Form -->
+            <div class="dashboard-card">
+                <h2>New Analysis Request</h2>
+                <p>Enter your business information to start the review analysis process.</p>
+                
+                {% if message %}
+                <div class="alert {% if 'success' in message %}alert-success{% else %}alert-error{% endif %}">
+                    {{ message }}
+                </div>
+                {% endif %}
+                
+                <form method="POST" action="/dashboard">
+                    <div class="form-group">
+                        <label for="business_name" class="form-label">Business Name</label>
+                        <input type="text" id="business_name" name="business_name" class="form-input" placeholder="e.g., Joe's Pizza Restaurant" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="business_address" class="form-label">Business Address</label>
+                        <textarea id="business_address" name="business_address" class="form-input" placeholder="e.g., 123 Main Street, New York, NY 10001" rows="3" required></textarea>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary" style="width: 100%;">Submit Analysis Request</button>
+                </form>
+            </div>
+
+            <!-- Order History -->
+            <div class="dashboard-card">
+                <h2>Your Analysis History</h2>
+                <p>Track the status of your review analysis requests.</p>
+                
+                {% if orders %}
+                <ul class="order-list">
+                    {% for order in orders %}
+                    <li class="order-item">
+                        <div class="order-header">
+                            <span class="order-name">{{ order.business_name }}</span>
+                            <span class="order-status">{{ order.status }}</span>
+                        </div>
+                        <p class="order-address">{{ order.business_address }}</p>
+                        <p class="order-date">Submitted: {{ order.created_at.strftime('%B %d, %Y') }}</p>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <div class="empty-state">
+                    <p>No analysis requests yet. Submit your first request to get started!</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
