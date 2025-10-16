@@ -9,11 +9,12 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # If DATABASE_URL is not set, try to construct it from individual components
 if not DATABASE_URL:
     # Try to get individual database components
-    db_user = os.getenv("DB_USER", "postgres")
-    db_password = os.getenv("DB_PASSWORD", "")
+    # First check for PGUSER/PGPASSWORD (local development)
+    db_user = os.getenv("PGUSER") or os.getenv("DB_USER", "postgres")
+    db_password = os.getenv("PGPASSWORD") or os.getenv("DB_PASSWORD", "")
     db_host = os.getenv("DB_HOST", "localhost")
     db_port = os.getenv("DB_PORT", "5432")
-    db_name = os.getenv("DB_NAME", "ai_review_analyzer_fastapi")
+    db_name = os.getenv("PGDATABASE") or os.getenv("DB_NAME", "ai_review_analyzer_fastapi")
     
     # Construct the connection string
     if db_password:
@@ -30,7 +31,7 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # Add SSL mode for Render if not already present
-if "sslmode" not in DATABASE_URL and ("render.com" in DATABASE_URL or "internal" in DATABASE_URL):
+if "sslmode" not in DATABASE_URL and (("render.com" in DATABASE_URL) or ("internal" in DATABASE_URL)):
     if "?" in DATABASE_URL:
         DATABASE_URL = DATABASE_URL + "&sslmode=require"
     else:
