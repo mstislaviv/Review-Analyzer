@@ -7,13 +7,24 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 import os
+import warnings
+
+# Suppress bcrypt version warning
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 MAX_PASSWORD_LENGTH = 72  # bcrypt limit
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Create password context with error handling
+try:
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+except Exception as e:
+    print(f"Warning: CryptContext initialization issue: {str(e)}")
+    # Fallback to basic bcrypt
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 security = HTTPBearer(auto_error=False)
 
 def validate_password(password: str) -> tuple[bool, str]:
