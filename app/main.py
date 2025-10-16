@@ -1,17 +1,27 @@
+from datetime import datetime
+import uuid
 from fastapi import FastAPI, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.database import get_db
-from app.models import User, Order
 from app.auth import (
     get_password_hash, 
     verify_password, 
     create_access_token,
     get_current_user_from_cookie,
     require_auth,
-    validate_password
+    validate_password,
+    decode_token
+)
+from app.auth_db import (
+    get_user_by_email,
+    get_user_by_id,
+    create_user,
+    user_exists,
+    get_user_orders
 )
 
 app = FastAPI(title="AI Review Analyzer")
@@ -28,14 +38,13 @@ async def home(request: Request):
     try:
         token = request.cookies.get("access_token")
         if token:
-            from app.auth import decode_token
             payload = decode_token(token)
             if payload:
                 email = payload.get("sub")
                 if email:
                     db = next(get_db())
                     try:
-                        user = db.query(User).filter(User.email == email).first()
+                        user = get_user_by_email(db, email)
                     finally:
                         db.close()
     except:
@@ -49,14 +58,13 @@ async def pricing(request: Request):
     try:
         token = request.cookies.get("access_token")
         if token:
-            from app.auth import decode_token
             payload = decode_token(token)
             if payload:
                 email = payload.get("sub")
                 if email:
                     db = next(get_db())
                     try:
-                        user = db.query(User).filter(User.email == email).first()
+                        user = get_user_by_email(db, email)
                     finally:
                         db.close()
     except:
@@ -89,8 +97,9 @@ async def login(
                 {"request": request, "error": "Please enter your password", "user": None}
             )
         
-        # Find user
-        user = db.query(User).filter(User.email == email.strip().lower()).first()
+        # Find user by email
+        email_lower = email.strip().lower()
+        user = get_user_by_email(db, email_lower)
         
         if not user or not verify_password(password, user.password):
             return templates.TemplateResponse(
@@ -98,12 +107,14 @@ async def login(
                 {"request": request, "error": "Invalid email or password", "user": None}
             )
         
-        # Create token and login
+        # Create token and redirect
         token = create_access_token({"sub": user.email})
         response = RedirectResponse(url="/dashboard", status_code=303)
         response.set_cookie(key="access_token", value=token, httponly=True, secure=True, samesite="lax")
         return response
+        
     except Exception as e:
+        print(f"Login error: {str(e)}")
         return templates.TemplateResponse(
             "login.html",
             {"request": request, "error": "An error occurred during login. Please try again.", "user": None}
@@ -152,8 +163,7 @@ async def signup(
         
         # Check if user already exists
         email_lower = email.strip().lower()
-        existing_user = db.query(User).filter(User.email == email_lower).first()
-        if existing_user:
+        if user_exists(db, email_lower):
             return templates.TemplateResponse(
                 "signup.html",
                 {"request": request, "error": "An account with this email already exists", "user": None}
@@ -161,25 +171,22 @@ async def signup(
         
         # Create new user
         try:
-            hashed_password = get_password_hash(password)
-            new_user = User(name=name.strip(), email=email_lower, password=hashed_password)
-            db.add(new_user)
-            db.commit()
-            db.refresh(new_user)
-        except ValueError as ve:
-            db.rollback()
+            new_user = create_user(db, name.strip(), email_lower, password)
+            
+            # Auto login
+            token = create_access_token({"sub": new_user.email})
+            response = RedirectResponse(url="/dashboard", status_code=303)
+            response.set_cookie(key="access_token", value=token, httponly=True, secure=True, samesite="lax")
+            return response
+        except Exception as e:
+            print(f"Error creating user: {str(e)}")
             return templates.TemplateResponse(
                 "signup.html",
                 {"request": request, "error": "Error creating account. Please try again.", "user": None}
             )
         
-        # Auto login
-        token = create_access_token({"sub": new_user.email})
-        response = RedirectResponse(url="/dashboard", status_code=303)
-        response.set_cookie(key="access_token", value=token, httponly=True, secure=True, samesite="lax")
-        return response
     except Exception as e:
-        db.rollback()
+        print(f"Signup error: {str(e)}")
         return templates.TemplateResponse(
             "signup.html",
             {"request": request, "error": "An error occurred during signup. Please try again.", "user": None}
@@ -188,138 +195,72 @@ async def signup(
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_auth)
+    db: Session = Depends(get_db)
 ):
     try:
-        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+        # Get token from cookie
+        token = request.cookies.get("access_token")
+        if not token:
+            return RedirectResponse(url="/login", status_code=303)
+        
+        # Decode token
+        payload = decode_token(token)
+        if not payload:
+            return RedirectResponse(url="/login", status_code=303)
+        
+        email = payload.get("sub")
+        if not email:
+            return RedirectResponse(url="/login", status_code=303)
+        
+        # Get user from database
+        user = get_user_by_email(db, email)
+        if not user:
+            return RedirectResponse(url="/login", status_code=303)
+        
+        # Get user's orders
+        orders = get_user_orders(db, user.id)
+        
         return templates.TemplateResponse(
             "dashboard.html",
             {"request": request, "user": user, "orders": orders}
         )
     except Exception as e:
-        return templates.TemplateResponse(
-            "dashboard.html",
-            {"request": request, "user": user, "orders": [], "error": "Error loading orders. Please refresh the page."}
-        )
-
-@app.post("/dashboard")
-async def create_order(
-    request: Request,
-    business_name: str = Form(...),
-    business_address: str = Form(...),
-    db: Session = Depends(get_db),
-    user: User = Depends(require_auth)
-):
-    try:
-        # Validate inputs
-        if not business_name or not business_name.strip():
-            orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
-            return templates.TemplateResponse(
-                "dashboard.html",
-                {"request": request, "user": user, "orders": orders, "error": "Please enter a business name"}
-            )
-        
-        if not business_address or not business_address.strip():
-            orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
-            return templates.TemplateResponse(
-                "dashboard.html",
-                {"request": request, "user": user, "orders": orders, "error": "Please enter a business address"}
-            )
-        
-        # Create new order
-        new_order = Order(
-            user_id=user.id,
-            business_name=business_name.strip(),
-            business_address=business_address.strip(),
-            status="pending"
-        )
-        db.add(new_order)
-        db.commit()
-        
-        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
-        return templates.TemplateResponse(
-            "dashboard.html",
-            {
-                "request": request,
-                "user": user,
-                "orders": orders,
-                "message": "✅ Order submitted successfully! We'll analyze your reviews and send you a report soon."
-            }
-        )
-    except Exception as e:
-        db.rollback()
-        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
-        return templates.TemplateResponse(
-            "dashboard.html",
-            {"request": request, "user": user, "orders": orders, "error": "Error creating order. Please try again."}
-        )
+        print(f"Dashboard error: {str(e)}")
+        return RedirectResponse(url="/login", status_code=303)
 
 @app.get("/logout")
-async def logout():
+async def logout(request: Request):
     response = RedirectResponse(url="/", status_code=303)
-    response.delete_cookie(key="access_token")
+    response.delete_cookie("access_token")
     return response
 
-@app.get("/privacy", response_class=HTMLResponse)
-async def privacy(request: Request):
-    user = None
-    try:
-        token = request.cookies.get("access_token")
-        if token:
-            from app.auth import decode_token
-            payload = decode_token(token)
-            if payload:
-                email = payload.get("sub")
-                if email:
-                    db = next(get_db())
-                    try:
-                        user = db.query(User).filter(User.email == email).first()
-                    finally:
-                        db.close()
-    except:
-        pass
-    
-    return templates.TemplateResponse("privacy.html", {"request": request, "user": user})
-
-@app.get("/terms", response_class=HTMLResponse)
-async def terms(request: Request):
-    user = None
-    try:
-        token = request.cookies.get("access_token")
-        if token:
-            from app.auth import decode_token
-            payload = decode_token(token)
-            if payload:
-                email = payload.get("sub")
-                if email:
-                    db = next(get_db())
-                    try:
-                        user = db.query(User).filter(User.email == email).first()
-                    finally:
-                        db.close()
-    except:
-        pass
-    
-    return templates.TemplateResponse("terms.html", {"request": request, "user": user})
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-# ============================================================================
-# STRIPE PAYMENT ROUTES
-# ============================================================================
-
+# Stripe payment routes
 @app.get("/checkout", response_class=HTMLResponse)
-async def checkout_page(request: Request, plan: str = "basic", db: Session = Depends(get_db), user: User = Depends(require_auth)):
-    """Display checkout page"""
-    from app.stripe_config import PRICING_PLANS, STRIPE_PUBLISHABLE_KEY
+async def checkout(request: Request, plan: str = "basic"):
+    user = None
+    try:
+        token = request.cookies.get("access_token")
+        if token:
+            payload = decode_token(token)
+            if payload:
+                email = payload.get("sub")
+                if email:
+                    db = next(get_db())
+                    try:
+                        user = get_user_by_email(db, email)
+                    finally:
+                        db.close()
+    except:
+        pass
     
-    if plan not in PRICING_PLANS:
-        plan = "basic"
+    # Pricing plans
+    plans = {
+        "basic": {"name": "Basic", "price": 29.99},
+        "pro": {"name": "Pro", "price": 79.99},
+        "enterprise": {"name": "Enterprise", "price": 199.99}
+    }
     
-    plan_info = PRICING_PLANS[plan]
+    selected_plan = plans.get(plan, plans["basic"])
     
     return templates.TemplateResponse(
         "checkout.html",
@@ -327,191 +268,145 @@ async def checkout_page(request: Request, plan: str = "basic", db: Session = Dep
             "request": request,
             "user": user,
             "plan": plan,
-            "plan_info": plan_info,
-            "stripe_publishable_key": STRIPE_PUBLISHABLE_KEY
+            "plan_name": selected_plan["name"],
+            "price": selected_plan["price"]
         }
     )
 
 @app.post("/api/create-payment-intent")
-async def create_payment_intent_endpoint(
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_auth)
-):
-    """Create a Stripe payment intent"""
-    from app.stripe_config import create_payment_intent, create_customer, PRICING_PLANS
-    from app.models import Payment
-    import json
-    
+async def create_payment_intent(request: Request, db: Session = Depends(get_db)):
     try:
-        body = await request.json()
-        plan = body.get("plan", "basic")
+        from app.stripe_config import stripe_api
         
-        if plan not in PRICING_PLANS:
-            return {"error": "Invalid plan"}
+        data = await request.json()
+        amount = int(float(data.get("amount", 0)) * 100)  # Convert to cents
         
-        plan_info = PRICING_PLANS[plan]
-        amount = plan_info["price"]
-        
-        # Create or get Stripe customer
-        if not user.stripe_customer_id:
-            customer = create_customer(user.email, user.name)
-            user.stripe_customer_id = customer.id
-            db.add(user)
-            db.commit()
-        
-        # Create payment intent
-        intent = create_payment_intent(
-            amount=amount,
-            email=user.email,
-            description=f"{plan_info['name']} - {user.email}"
-        )
-        
-        # Store payment record
-        payment = Payment(
-            user_id=user.id,
-            stripe_payment_intent_id=intent.id,
+        intent = stripe_api.create_payment_intent(
             amount=amount,
             currency="usd",
-            status="pending",
-            description=plan_info["name"]
+            description=data.get("description", "AI Review Analyzer")
         )
-        db.add(payment)
-        db.commit()
         
-        return {
-            "clientSecret": intent.client_secret,
-            "paymentIntentId": intent.id
-        }
+        return {"client_secret": intent.client_secret}
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Error creating payment intent: {str(e)}")
+        return {"error": str(e)}, 400
 
 @app.post("/api/confirm-payment")
-async def confirm_payment(
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_auth)
-):
-    """Confirm payment and create order"""
-    from app.models import Payment, Order
-    import json
-    
+async def confirm_payment(request: Request, db: Session = Depends(get_db)):
     try:
-        body = await request.json()
-        payment_intent_id = body.get("paymentIntentId")
-        business_name = body.get("businessName")
-        business_address = body.get("businessAddress")
+        from app.stripe_config import stripe_api
         
-        # Validate inputs
-        if not business_name or not business_name.strip():
-            return {"error": "Please enter a business name"}
+        data = await request.json()
+        payment_intent_id = data.get("payment_intent_id")
         
-        if not business_address or not business_address.strip():
-            return {"error": "Please enter a business address"}
+        # Verify payment with Stripe
+        intent = stripe_api.retrieve_payment_intent(payment_intent_id)
         
-        # Get payment record
-        payment = db.query(Payment).filter(
-            Payment.stripe_payment_intent_id == payment_intent_id,
-            Payment.user_id == user.id
-        ).first()
+        if intent.status != "succeeded":
+            return {"error": "Payment not completed"}, 400
         
-        if not payment:
-            return {"error": "Payment not found"}
+        # Get current user
+        token = request.cookies.get("access_token")
+        if not token:
+            return {"error": "Not authenticated"}, 401
         
-        # Create order
-        new_order = Order(
-            user_id=user.id,
-            business_name=business_name.strip(),
-            business_address=business_address.strip(),
-            status="pending",
-            price=payment.amount,
-            payment_id=payment.id
-        )
-        db.add(new_order)
+        payload = decode_token(token)
+        if not payload:
+            return {"error": "Invalid token"}, 401
         
-        # Update payment status
-        payment.status = "succeeded"
-        db.add(payment)
-        db.commit()
+        email = payload.get("sub")
+        user = get_user_by_email(db, email)
+        if not user:
+            return {"error": "User not found"}, 404
         
-        return {
-            "success": True,
-            "orderId": new_order.id,
-            "message": "Payment successful! Your order has been created."
-        }
+        # Create payment record
+        try:
+            db.execute(
+                text('INSERT INTO "Payment" ("userId", stripe_payment_intent_id, stripe_charge_id, amount, currency, status, "createdAt", "updatedAt") VALUES (:userId, :stripe_payment_intent_id, :stripe_charge_id, :amount, :currency, :status, :createdAt, :updatedAt)'),
+                {
+                    "userId": user.id,
+                    "stripe_payment_intent_id": payment_intent_id,
+                    "stripe_charge_id": intent.charges.data[0].id if intent.charges.data else None,
+                    "amount": intent.amount / 100,
+                    "currency": intent.currency,
+                    "status": "succeeded",
+                    "createdAt": datetime.utcnow(),
+                    "updatedAt": datetime.utcnow()
+                }
+            )
+            db.commit()
+        except Exception as e:
+            print(f"Error creating payment record: {str(e)}")
+            db.rollback()
+        
+        return {"success": True}
     except Exception as e:
-        db.rollback()
-        return {"error": str(e)}
+        print(f"Error confirming payment: {str(e)}")
+        return {"error": str(e)}, 400
 
 @app.post("/webhook/stripe")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
-    """Handle Stripe webhook events"""
-    from app.stripe_config import STRIPE_WEBHOOK_SECRET
-    from app.models import Payment
-    import stripe
-    import json
-    
     try:
+        from app.stripe_config import stripe_api
+        
         payload = await request.body()
         sig_header = request.headers.get("stripe-signature")
         
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, STRIPE_WEBHOOK_SECRET
-        )
+        event = stripe_api.verify_webhook(payload, sig_header)
         
         if event["type"] == "payment_intent.succeeded":
             payment_intent = event["data"]["object"]
-            payment = db.query(Payment).filter(
-                Payment.stripe_payment_intent_id == payment_intent["id"]
-            ).first()
-            
-            if payment:
-                payment.status = "succeeded"
-                payment.stripe_charge_id = payment_intent.get("charges", {}).get("data", [{}])[0].get("id")
-                db.add(payment)
-                db.commit()
-        
+            print(f"Payment succeeded: {payment_intent['id']}")
         elif event["type"] == "payment_intent.payment_failed":
             payment_intent = event["data"]["object"]
-            payment = db.query(Payment).filter(
-                Payment.stripe_payment_intent_id == payment_intent["id"]
-            ).first()
-            
-            if payment:
-                payment.status = "failed"
-                db.add(payment)
-                db.commit()
+            print(f"Payment failed: {payment_intent['id']}")
         
         return {"status": "success"}
     except Exception as e:
+        print(f"Webhook error: {str(e)}")
         return {"error": str(e)}, 400
 
 @app.get("/payment-success", response_class=HTMLResponse)
-async def payment_success(request: Request, db: Session = Depends(get_db), user: User = Depends(require_auth)):
-    """Payment success page"""
-    orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+async def payment_success(request: Request):
+    user = None
+    try:
+        token = request.cookies.get("access_token")
+        if token:
+            payload = decode_token(token)
+            if payload:
+                email = payload.get("sub")
+                if email:
+                    db = next(get_db())
+                    try:
+                        user = get_user_by_email(db, email)
+                    finally:
+                        db.close()
+    except:
+        pass
     
-    return templates.TemplateResponse(
-        "payment-success.html",
-        {
-            "request": request,
-            "user": user,
-            "orders": orders,
-            "message": "✅ Payment successful! Your analysis request has been created."
-        }
-    )
+    return templates.TemplateResponse("payment-success.html", {"request": request, "user": user})
 
 @app.get("/payment-failed", response_class=HTMLResponse)
-async def payment_failed(request: Request, db: Session = Depends(get_db), user: User = Depends(require_auth)):
-    """Payment failed page"""
-    orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+async def payment_failed(request: Request):
+    user = None
+    try:
+        token = request.cookies.get("access_token")
+        if token:
+            payload = decode_token(token)
+            if payload:
+                email = payload.get("sub")
+                if email:
+                    db = next(get_db())
+                    try:
+                        user = get_user_by_email(db, email)
+                    finally:
+                        db.close()
+    except:
+        pass
     
-    return templates.TemplateResponse(
-        "payment-failed.html",
-        {
-            "request": request,
-            "user": user,
-            "orders": orders,
-            "error": "Payment failed. Please try again."
-        }
-    )
+    return templates.TemplateResponse("payment-failed.html", {"request": request, "user": user})
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

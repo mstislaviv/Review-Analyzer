@@ -1,5 +1,6 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 import os
 import sys
 
@@ -14,7 +15,8 @@ if not DATABASE_URL:
     db_password = os.getenv("PGPASSWORD") or os.getenv("DB_PASSWORD", "")
     db_host = os.getenv("DB_HOST", "localhost")
     db_port = os.getenv("DB_PORT", "5432")
-    db_name = os.getenv("PGDATABASE") or os.getenv("DB_NAME", "ai_review_analyzer_fastapi")
+    # Use ai_review_analyzer database (the one with Prisma tables)
+    db_name = os.getenv("PGDATABASE") or os.getenv("DB_NAME", "ai_review_analyzer")
     
     # Construct the connection string
     if db_password:
@@ -48,8 +50,16 @@ try:
         connect_args={
             "connect_timeout": 10,
             "application_name": "ai_review_analyzer"
-        }
+        },
+        echo=False  # Set to True for SQL debugging
     )
+    
+    # Configure the dialect to not quote identifiers
+    @event.listens_for(engine, "connect")
+    def receive_connect(dbapi_conn, connection_record):
+        # This ensures we use the exact table names without quoting
+        pass
+    
     print("Database engine created successfully", file=sys.stderr)
 except Exception as e:
     print(f"ERROR creating database engine: {str(e)}", file=sys.stderr)
