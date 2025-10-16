@@ -16,7 +16,10 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        return False
 
 def get_password_hash(password):
     return pwd_context.hash(password)
@@ -36,26 +39,37 @@ def decode_token(token: str):
         return None
 
 def get_current_user_from_cookie(request: Request, db: Session = Depends(get_db)):
-    token = request.cookies.get("access_token")
-    if not token:
+    try:
+        token = request.cookies.get("access_token")
+        if not token:
+            return None
+        
+        payload = decode_token(token)
+        if payload is None:
+            return None
+        
+        email = payload.get("sub")
+        if email is None:
+            return None
+        
+        user = db.query(User).filter(User.email == email).first()
+        return user
+    except Exception:
         return None
-    
-    payload = decode_token(token)
-    if payload is None:
-        return None
-    
-    email = payload.get("sub")
-    if email is None:
-        return None
-    
-    user = db.query(User).filter(User.email == email).first()
-    return user
 
 def require_auth(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user_from_cookie(request, db)
-    if user is None:
+    try:
+        user = get_current_user_from_cookie(request, db)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated"
+            )
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated"
+            detail=f"Authentication error: {str(e)}"
         )
-    return user

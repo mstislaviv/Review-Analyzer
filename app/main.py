@@ -22,13 +22,45 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user_from_cookie(request, db)
+async def home(request: Request):
+    user = None
+    try:
+        token = request.cookies.get("access_token")
+        if token:
+            from app.auth import decode_token
+            payload = decode_token(token)
+            if payload:
+                email = payload.get("sub")
+                if email:
+                    db = next(get_db())
+                    try:
+                        user = db.query(User).filter(User.email == email).first()
+                    finally:
+                        db.close()
+    except:
+        pass
+    
     return templates.TemplateResponse("index.html", {"request": request, "user": user})
 
 @app.get("/pricing", response_class=HTMLResponse)
-async def pricing(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user_from_cookie(request, db)
+async def pricing(request: Request):
+    user = None
+    try:
+        token = request.cookies.get("access_token")
+        if token:
+            from app.auth import decode_token
+            payload = decode_token(token)
+            if payload:
+                email = payload.get("sub")
+                if email:
+                    db = next(get_db())
+                    try:
+                        user = db.query(User).filter(User.email == email).first()
+                    finally:
+                        db.close()
+    except:
+        pass
+    
     return templates.TemplateResponse("pricing.html", {"request": request, "user": user})
 
 @app.get("/login", response_class=HTMLResponse)
@@ -42,18 +74,24 @@ async def login(
     password: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.email == email).first()
-    
-    if not user or not verify_password(password, user.password):
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        
+        if not user or not verify_password(password, user.password):
+            return templates.TemplateResponse(
+                "login.html",
+                {"request": request, "error": "Invalid email or password", "user": None}
+            )
+        
+        token = create_access_token({"sub": user.email})
+        response = RedirectResponse(url="/dashboard", status_code=303)
+        response.set_cookie(key="access_token", value=token, httponly=True)
+        return response
+    except Exception as e:
         return templates.TemplateResponse(
             "login.html",
-            {"request": request, "error": "Invalid email or password", "user": None}
+            {"request": request, "error": f"Login error: {str(e)}", "user": None}
         )
-    
-    token = create_access_token({"sub": user.email})
-    response = RedirectResponse(url="/dashboard", status_code=303)
-    response.set_cookie(key="access_token", value=token, httponly=True)
-    return response
 
 @app.get("/signup", response_class=HTMLResponse)
 async def signup_page(request: Request):
@@ -67,25 +105,30 @@ async def signup(
     password: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    # Check if user exists
-    existing_user = db.query(User).filter(User.email == email).first()
-    if existing_user:
+    try:
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            return templates.TemplateResponse(
+                "signup.html",
+                {"request": request, "error": "User already exists with this email", "user": None}
+            )
+        
+        hashed_password = get_password_hash(password)
+        new_user = User(name=name, email=email, password=hashed_password)
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        token = create_access_token({"sub": new_user.email})
+        response = RedirectResponse(url="/dashboard", status_code=303)
+        response.set_cookie(key="access_token", value=token, httponly=True)
+        return response
+    except Exception as e:
+        db.rollback()
         return templates.TemplateResponse(
             "signup.html",
-            {"request": request, "error": "User already exists with this email", "user": None}
+            {"request": request, "error": f"Signup error: {str(e)}", "user": None}
         )
-    
-    # Create new user
-    hashed_password = get_password_hash(password)
-    new_user = User(name=name, email=email, password=hashed_password)
-    db.add(new_user)
-    db.commit()
-    
-    # Auto login
-    token = create_access_token({"sub": new_user.email})
-    response = RedirectResponse(url="/dashboard", status_code=303)
-    response.set_cookie(key="access_token", value=token, httponly=True)
-    return response
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(
@@ -93,11 +136,17 @@ async def dashboard(
     db: Session = Depends(get_db),
     user: User = Depends(require_auth)
 ):
-    orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request, "user": user, "orders": orders}
-    )
+    try:
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+        return templates.TemplateResponse(
+            "dashboard.html",
+            {"request": request, "user": user, "orders": orders}
+        )
+    except Exception as e:
+        return templates.TemplateResponse(
+            "dashboard.html",
+            {"request": request, "user": user, "orders": [], "error": f"Error loading orders: {str(e)}"}
+        )
 
 @app.post("/dashboard")
 async def create_order(
@@ -107,26 +156,33 @@ async def create_order(
     db: Session = Depends(get_db),
     user: User = Depends(require_auth)
 ):
-    # Create new order
-    new_order = Order(
-        user_id=user.id,
-        business_name=business_name,
-        business_address=business_address,
-        status="pending"
-    )
-    db.add(new_order)
-    db.commit()
-    
-    orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "user": user,
-            "orders": orders,
-            "message": "Order submitted successfully! We'll analyze your reviews and send you a report."
-        }
-    )
+    try:
+        new_order = Order(
+            user_id=user.id,
+            business_name=business_name,
+            business_address=business_address,
+            status="pending"
+        )
+        db.add(new_order)
+        db.commit()
+        
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+        return templates.TemplateResponse(
+            "dashboard.html",
+            {
+                "request": request,
+                "user": user,
+                "orders": orders,
+                "message": "Order submitted successfully! We'll analyze your reviews and send you a report."
+            }
+        )
+    except Exception as e:
+        db.rollback()
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+        return templates.TemplateResponse(
+            "dashboard.html",
+            {"request": request, "user": user, "orders": orders, "error": f"Error creating order: {str(e)}"}
+        )
 
 @app.get("/logout")
 async def logout():
@@ -135,13 +191,45 @@ async def logout():
     return response
 
 @app.get("/privacy", response_class=HTMLResponse)
-async def privacy(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user_from_cookie(request, db)
+async def privacy(request: Request):
+    user = None
+    try:
+        token = request.cookies.get("access_token")
+        if token:
+            from app.auth import decode_token
+            payload = decode_token(token)
+            if payload:
+                email = payload.get("sub")
+                if email:
+                    db = next(get_db())
+                    try:
+                        user = db.query(User).filter(User.email == email).first()
+                    finally:
+                        db.close()
+    except:
+        pass
+    
     return templates.TemplateResponse("privacy.html", {"request": request, "user": user})
 
 @app.get("/terms", response_class=HTMLResponse)
-async def terms(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user_from_cookie(request, db)
+async def terms(request: Request):
+    user = None
+    try:
+        token = request.cookies.get("access_token")
+        if token:
+            from app.auth import decode_token
+            payload = decode_token(token)
+            if payload:
+                email = payload.get("sub")
+                if email:
+                    db = next(get_db())
+                    try:
+                        user = db.query(User).filter(User.email == email).first()
+                    finally:
+                        db.close()
+    except:
+        pass
+    
     return templates.TemplateResponse("terms.html", {"request": request, "user": user})
 
 if __name__ == "__main__":
