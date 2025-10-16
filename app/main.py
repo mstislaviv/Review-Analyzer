@@ -306,3 +306,212 @@ async def terms(request: Request):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# ============================================================================
+# STRIPE PAYMENT ROUTES
+# ============================================================================
+
+@app.get("/checkout", response_class=HTMLResponse)
+async def checkout_page(request: Request, plan: str = "basic", db: Session = Depends(get_db), user: User = Depends(require_auth)):
+    """Display checkout page"""
+    from app.stripe_config import PRICING_PLANS, STRIPE_PUBLISHABLE_KEY
+    
+    if plan not in PRICING_PLANS:
+        plan = "basic"
+    
+    plan_info = PRICING_PLANS[plan]
+    
+    return templates.TemplateResponse(
+        "checkout.html",
+        {
+            "request": request,
+            "user": user,
+            "plan": plan,
+            "plan_info": plan_info,
+            "stripe_publishable_key": STRIPE_PUBLISHABLE_KEY
+        }
+    )
+
+@app.post("/api/create-payment-intent")
+async def create_payment_intent_endpoint(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth)
+):
+    """Create a Stripe payment intent"""
+    from app.stripe_config import create_payment_intent, create_customer, PRICING_PLANS
+    from app.models import Payment
+    import json
+    
+    try:
+        body = await request.json()
+        plan = body.get("plan", "basic")
+        
+        if plan not in PRICING_PLANS:
+            return {"error": "Invalid plan"}
+        
+        plan_info = PRICING_PLANS[plan]
+        amount = plan_info["price"]
+        
+        # Create or get Stripe customer
+        if not user.stripe_customer_id:
+            customer = create_customer(user.email, user.name)
+            user.stripe_customer_id = customer.id
+            db.add(user)
+            db.commit()
+        
+        # Create payment intent
+        intent = create_payment_intent(
+            amount=amount,
+            email=user.email,
+            description=f"{plan_info['name']} - {user.email}"
+        )
+        
+        # Store payment record
+        payment = Payment(
+            user_id=user.id,
+            stripe_payment_intent_id=intent.id,
+            amount=amount,
+            currency="usd",
+            status="pending",
+            description=plan_info["name"]
+        )
+        db.add(payment)
+        db.commit()
+        
+        return {
+            "clientSecret": intent.client_secret,
+            "paymentIntentId": intent.id
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/api/confirm-payment")
+async def confirm_payment(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth)
+):
+    """Confirm payment and create order"""
+    from app.models import Payment, Order
+    import json
+    
+    try:
+        body = await request.json()
+        payment_intent_id = body.get("paymentIntentId")
+        business_name = body.get("businessName")
+        business_address = body.get("businessAddress")
+        
+        # Validate inputs
+        if not business_name or not business_name.strip():
+            return {"error": "Please enter a business name"}
+        
+        if not business_address or not business_address.strip():
+            return {"error": "Please enter a business address"}
+        
+        # Get payment record
+        payment = db.query(Payment).filter(
+            Payment.stripe_payment_intent_id == payment_intent_id,
+            Payment.user_id == user.id
+        ).first()
+        
+        if not payment:
+            return {"error": "Payment not found"}
+        
+        # Create order
+        new_order = Order(
+            user_id=user.id,
+            business_name=business_name.strip(),
+            business_address=business_address.strip(),
+            status="pending",
+            price=payment.amount,
+            payment_id=payment.id
+        )
+        db.add(new_order)
+        
+        # Update payment status
+        payment.status = "succeeded"
+        db.add(payment)
+        db.commit()
+        
+        return {
+            "success": True,
+            "orderId": new_order.id,
+            "message": "Payment successful! Your order has been created."
+        }
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+
+@app.post("/webhook/stripe")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    """Handle Stripe webhook events"""
+    from app.stripe_config import STRIPE_WEBHOOK_SECRET
+    from app.models import Payment
+    import stripe
+    import json
+    
+    try:
+        payload = await request.body()
+        sig_header = request.headers.get("stripe-signature")
+        
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
+        
+        if event["type"] == "payment_intent.succeeded":
+            payment_intent = event["data"]["object"]
+            payment = db.query(Payment).filter(
+                Payment.stripe_payment_intent_id == payment_intent["id"]
+            ).first()
+            
+            if payment:
+                payment.status = "succeeded"
+                payment.stripe_charge_id = payment_intent.get("charges", {}).get("data", [{}])[0].get("id")
+                db.add(payment)
+                db.commit()
+        
+        elif event["type"] == "payment_intent.payment_failed":
+            payment_intent = event["data"]["object"]
+            payment = db.query(Payment).filter(
+                Payment.stripe_payment_intent_id == payment_intent["id"]
+            ).first()
+            
+            if payment:
+                payment.status = "failed"
+                db.add(payment)
+                db.commit()
+        
+        return {"status": "success"}
+    except Exception as e:
+        return {"error": str(e)}, 400
+
+@app.get("/payment-success", response_class=HTMLResponse)
+async def payment_success(request: Request, db: Session = Depends(get_db), user: User = Depends(require_auth)):
+    """Payment success page"""
+    orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+    
+    return templates.TemplateResponse(
+        "payment-success.html",
+        {
+            "request": request,
+            "user": user,
+            "orders": orders,
+            "message": "✅ Payment successful! Your analysis request has been created."
+        }
+    )
+
+@app.get("/payment-failed", response_class=HTMLResponse)
+async def payment_failed(request: Request, db: Session = Depends(get_db), user: User = Depends(require_auth)):
+    """Payment failed page"""
+    orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+    
+    return templates.TemplateResponse(
+        "payment-failed.html",
+        {
+            "request": request,
+            "user": user,
+            "orders": orders,
+            "error": "Payment failed. Please try again."
+        }
+    )

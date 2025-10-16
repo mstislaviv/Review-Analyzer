@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checkout - AI Review Analyzer</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+        .checkout-container {
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+        
+        .checkout-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .checkout-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+        
+        .order-summary {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        
+        .order-summary h3 {
+            margin-top: 0;
+            margin-bottom: 20px;
+        }
+        
+        .summary-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .summary-item:last-child {
+            border-bottom: none;
+        }
+        
+        .summary-total {
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            font-weight: bold;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #333;
+        }
+        
+        .payment-form {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+        
+        .payment-form h3 {
+            margin-top: 0;
+            margin-bottom: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        #card-element {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: white;
+        }
+        
+        .card-errors {
+            color: #fa755a;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .submit-btn {
+            width: 100%;
+            padding: 12px;
+            background: #000;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .submit-btn:hover {
+            background: #333;
+        }
+        
+        .submit-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #000;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        @media (max-width: 768px) {
+            .checkout-content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="nav-logo">AI Review Analyzer</a>
+            <div class="nav-menu">
+                <a href="/" class="nav-link">Home</a>
+                <a href="/pricing" class="nav-link">Pricing</a>
+                {% if user %}
+                    <a href="/dashboard" class="nav-link">Dashboard</a>
+                    <a href="/logout" class="nav-link">Sign Out</a>
+                {% else %}
+                    <a href="/login" class="nav-link">Login</a>
+                    <a href="/signup" class="nav-link">Sign Up</a>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <div class="checkout-container">
+        <div class="checkout-header">
+            <h1>Checkout</h1>
+            <p>Complete your payment to start your analysis</p>
+        </div>
+
+        <div class="checkout-content">
+            <!-- Order Summary -->
+            <div class="order-summary">
+                <h3>Order Summary</h3>
+                
+                <div class="summary-item">
+                    <span>Plan:</span>
+                    <strong>{{ plan_info.name }}</strong>
+                </div>
+                
+                <div class="summary-item">
+                    <span>Description:</span>
+                    <span>{{ plan_info.description }}</span>
+                </div>
+                
+                <div class="summary-total">
+                    <span>Total:</span>
+                    <span>${{ "%.2f"|format(plan_info.price) }}</span>
+                </div>
+            </div>
+
+            <!-- Payment Form -->
+            <div class="payment-form">
+                <h3>Payment Details</h3>
+                
+                <div class="error-message" id="error-message"></div>
+                <div class="success-message" id="success-message"></div>
+
+                <form id="payment-form">
+                    <div class="form-group">
+                        <label for="business-name">Business Name *</label>
+                        <input 
+                            type="text" 
+                            id="business-name" 
+                            name="businessName" 
+                            placeholder="e.g., Joe's Pizza Restaurant"
+                            required
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="business-address">Business Address *</label>
+                        <textarea 
+                            id="business-address" 
+                            name="businessAddress" 
+                            placeholder="e.g., 123 Main Street, New York, NY 10001"
+                            required
+                        ></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="card-element">Card Details *</label>
+                        <div id="card-element"></div>
+                        <div class="card-errors" id="card-errors"></div>
+                    </div>
+
+                    <button type="submit" class="submit-btn" id="submit-btn">
+                        Pay ${{ "%.2f"|format(plan_info.price) }}
+                    </button>
+
+                    <div class="loading" id="loading">
+                        <div class="spinner"></div>
+                        <p>Processing payment...</p>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h4>AI Review Analyzer</h4>
+                <p>Get AI-powered insights from your customer reviews to improve your business.</p>
+            </div>
+            <div class="footer-section">
+                <h4>Contact</h4>
+                <p>Contact information coming soon</p>
+            </div>
+            <div class="footer-section">
+                <h4>Legal</h4>
+                <ul>
+                    <li><a href="/privacy">Privacy Policy</a></li>
+                    <li><a href="/terms">Terms of Service</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2025 AI Review Analyzer. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script>
+        const stripe = Stripe('{{ stripe_publishable_key }}');
+        const elements = stripe.elements();
+        const cardElement = elements.create('card');
+        cardElement.mount('#card-element');
+
+        const cardErrors = document.getElementById('card-errors');
+        cardElement.on('change', function(event) {
+            if (event.error) {
+                cardErrors.textContent = event.error.message;
+            } else {
+                cardErrors.textContent = '';
+            }
+        });
+
+        const form = document.getElementById('payment-form');
+        const submitBtn = document.getElementById('submit-btn');
+        const loading = document.getElementById('loading');
+        const errorMessage = document.getElementById('error-message');
+        const successMessage = document.getElementById('success-message');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const businessName = document.getElementById('business-name').value;
+            const businessAddress = document.getElementById('business-address').value;
+
+            if (!businessName.trim()) {
+                errorMessage.textContent = 'Please enter a business name';
+                errorMessage.style.display = 'block';
+                return;
+            }
+
+            if (!businessAddress.trim()) {
+                errorMessage.textContent = 'Please enter a business address';
+                errorMessage.style.display = 'block';
+                return;
+            }
+
+            submitBtn.disabled = true;
+            loading.style.display = 'block';
+            errorMessage.style.display = 'none';
+
+            try {
+                // Create payment intent
+                const intentResponse = await fetch('/api/create-payment-intent', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        plan: '{{ plan }}'
+                    })
+                });
+
+                const intentData = await intentResponse.json();
+
+                if (intentData.error) {
+                    throw new Error(intentData.error);
+                }
+
+                // Confirm payment with Stripe
+                const { error, paymentIntent } = await stripe.confirmCardPayment(
+                    intentData.clientSecret,
+                    {
+                        payment_method: {
+                            card: cardElement,
+                            billing_details: {
+                                name: '{{ user.name }}'
+                            }
+                        }
+                    }
+                );
+
+                if (error) {
+                    throw new Error(error.message);
+                }
+
+                // Confirm payment on backend
+                const confirmResponse = await fetch('/api/confirm-payment', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        paymentIntentId: intentData.paymentIntentId,
+                        businessName: businessName,
+                        businessAddress: businessAddress
+                    })
+                });
+
+                const confirmData = await confirmResponse.json();
+
+                if (confirmData.error) {
+                    throw new Error(confirmData.error);
+                }
+
+                // Redirect to success page
+                window.location.href = '/payment-success';
+
+            } catch (error) {
+                errorMessage.textContent = error.message || 'Payment failed. Please try again.';
+                errorMessage.style.display = 'block';
+                submitBtn.disabled = false;
+                loading.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

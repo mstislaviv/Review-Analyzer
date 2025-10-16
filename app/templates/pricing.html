@@ -15,19 +15,24 @@
                 <div class="pricing-header-content">
                     <h3>Basic</h3>
                     <div>
-                        <span class="price">$9.99</span>
-                        <span class="price-period">/month</span>
+                        <span class="price">$29.99</span>
+                        <span class="price-period">/analysis</span>
                     </div>
                 </div>
                 
                 <ul class="features">
-                    <li>Up to 5 business analyses per month</li>
-                    <li>Basic AI insights</li>
-                    <li>PDF report generation</li>
-                    <li>Email support</li>
+                    <li>✓ Single business review analysis</li>
+                    <li>✓ AI-powered insights</li>
+                    <li>✓ PDF report generation</li>
+                    <li>✓ Email support</li>
+                    <li>✓ 24-hour turnaround</li>
                 </ul>
                 
-                <a href="/signup" class="btn btn-outline" style="width: 100%;">Get Started</a>
+                {% if user %}
+                    <a href="/checkout?plan=basic" class="btn btn-outline" style="width: 100%;">Start Analysis</a>
+                {% else %}
+                    <a href="/signup" class="btn btn-outline" style="width: 100%;">Sign Up to Get Started</a>
+                {% endif %}
             </div>
 
             <div class="pricing-card popular">
@@ -35,49 +40,59 @@
                 <div class="pricing-header-content">
                     <h3>Pro</h3>
                     <div>
-                        <span class="price">$15.99</span>
-                        <span class="price-period">/month</span>
+                        <span class="price">$79.99</span>
+                        <span class="price-period">/analysis</span>
                     </div>
                 </div>
                 
                 <ul class="features">
-                    <li>Up to 20 business analyses per month</li>
-                    <li>Advanced AI insights</li>
-                    <li>Detailed PDF reports</li>
-                    <li>Priority email support</li>
-                    <li>Competitor analysis</li>
-                    <li>Trend tracking</li>
+                    <li>✓ Up to 5 business analyses</li>
+                    <li>✓ Advanced AI insights</li>
+                    <li>✓ Detailed PDF reports</li>
+                    <li>✓ Priority email support</li>
+                    <li>✓ Competitor analysis</li>
+                    <li>✓ Trend tracking</li>
+                    <li>✓ 12-hour turnaround</li>
                 </ul>
                 
-                <a href="/signup" class="btn btn-primary" style="width: 100%;">Get Started</a>
+                {% if user %}
+                    <a href="/checkout?plan=pro" class="btn btn-primary" style="width: 100%;">Start Analysis</a>
+                {% else %}
+                    <a href="/signup" class="btn btn-primary" style="width: 100%;">Sign Up to Get Started</a>
+                {% endif %}
             </div>
 
             <div class="pricing-card">
                 <div class="pricing-header-content">
                     <h3>Enterprise</h3>
                     <div>
-                        <span class="price">$49.99</span>
-                        <span class="price-period">/month</span>
+                        <span class="price">$199.99</span>
+                        <span class="price-period">/analysis</span>
                     </div>
                 </div>
                 
                 <ul class="features">
-                    <li>Unlimited business analyses</li>
-                    <li>Premium AI insights</li>
-                    <li>Custom branded reports</li>
-                    <li>24/7 phone & email support</li>
-                    <li>API access</li>
-                    <li>Custom integrations</li>
-                    <li>Dedicated account manager</li>
+                    <li>✓ Unlimited business analyses</li>
+                    <li>✓ Premium AI insights</li>
+                    <li>✓ Custom branded reports</li>
+                    <li>✓ 24/7 phone & email support</li>
+                    <li>✓ API access</li>
+                    <li>✓ Custom integrations</li>
+                    <li>✓ Dedicated account manager</li>
+                    <li>✓ Priority processing</li>
                 </ul>
                 
-                <a href="/signup" class="btn btn-outline" style="width: 100%;">Get Started</a>
+                {% if user %}
+                    <a href="/checkout?plan=enterprise" class="btn btn-outline" style="width: 100%;">Start Analysis</a>
+                {% else %}
+                    <a href="/signup" class="btn btn-outline" style="width: 100%;">Sign Up to Get Started</a>
+                {% endif %}
             </div>
         </div>
 
         <div style="text-align: center; margin-top: 4rem;">
             <p style="color: #666666; margin-bottom: 1rem;">
-                All plans include a 14-day free trial. No credit card required.
+                💳 Secure payments powered by Stripe. Your payment information is always encrypted and secure.
             </p>
             <p style="color: #999999; font-size: 14px;">
                 Need a custom solution? <a href="mailto:contact@aireviewanalyzer.com" style="color: #000000;">Contact us</a>
