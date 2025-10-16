@@ -23,6 +23,7 @@ from app.auth_db import (
     user_exists,
     get_user_orders
 )
+from app.stripe_config import STRIPE_PUBLISHABLE_KEY
 
 app = FastAPI(title="AI Review Analyzer")
 
@@ -236,7 +237,7 @@ async def logout(request: Request):
 
 # Stripe payment routes
 @app.get("/checkout", response_class=HTMLResponse)
-async def checkout(request: Request, plan: str = "basic"):
+async def checkout(request: Request, plan: str = "basic", db: Session = Depends(get_db)):
     user = None
     try:
         token = request.cookies.get("access_token")
@@ -245,22 +246,30 @@ async def checkout(request: Request, plan: str = "basic"):
             if payload:
                 email = payload.get("sub")
                 if email:
-                    db = next(get_db())
-                    try:
-                        user = get_user_by_email(db, email)
-                    finally:
-                        db.close()
+                    user = get_user_by_email(db, email)
     except:
         pass
     
     # Pricing plans
     plans = {
-        "basic": {"name": "Basic", "price": 29.99},
-        "pro": {"name": "Pro", "price": 79.99},
-        "enterprise": {"name": "Enterprise", "price": 199.99}
+        "basic": {
+            "name": "Basic",
+            "price": 29.99,
+            "description": "Single business review analysis with AI-powered insights"
+        },
+        "pro": {
+            "name": "Pro",
+            "price": 79.99,
+            "description": "Up to 5 business analyses with advanced AI insights"
+        },
+        "enterprise": {
+            "name": "Enterprise",
+            "price": 199.99,
+            "description": "Unlimited business analyses with premium AI insights"
+        }
     }
     
-    selected_plan = plans.get(plan, plans["basic"])
+    plan_info = plans.get(plan, plans["basic"])
     
     return templates.TemplateResponse(
         "checkout.html",
@@ -268,8 +277,8 @@ async def checkout(request: Request, plan: str = "basic"):
             "request": request,
             "user": user,
             "plan": plan,
-            "plan_name": selected_plan["name"],
-            "price": selected_plan["price"]
+            "plan_info": plan_info,
+            "stripe_publishable_key": STRIPE_PUBLISHABLE_KEY
         }
     )
 
